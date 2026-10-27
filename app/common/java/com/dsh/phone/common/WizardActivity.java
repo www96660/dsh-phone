@@ -23,15 +23,20 @@ import android.widget.TextView;
  * after the first successful deploy and prefilled afterwards; when DSH is already
  * running on 127.0.0.1:3080 the shell opens immediately; after a successful deploy
  * the shell opens automatically — there is no manual "open" button.
+ *
+ * Third-party API: an optional endpoint field (OpenAI-compatible relay) is saved
+ * alongside the key and passed to the deploy scripts as DSH_BASE_URL.
  */
 public abstract class WizardActivity extends Activity {
     private static final String PREFS = "dsh_phone";
     private static final String KEY_API = "api_key";
+    private static final String KEY_BASE = "api_base";
     private static final String KEY_DEPLOYED = "deployed";
 
     protected TextView statusView;
     protected TextView logView;
     protected EditText keyInput;
+    protected EditText baseInput;
     protected Button deployBtn;
     private final StringBuilder logBuf = new StringBuilder();
     private boolean deploying = false;
@@ -40,7 +45,7 @@ public abstract class WizardActivity extends Activity {
     protected abstract String modeLabel();
 
     /** Deploy on a background thread. Throwing reports failure and ends the run. */
-    protected abstract void doDeploy(String apiKey) throws Exception;
+    protected abstract void doDeploy(String apiKey, String baseUrl) throws Exception;
 
     /** WebView shell activity, opened automatically once DSH is reachable. */
     protected abstract Class<?> shellActivityClass();
@@ -93,13 +98,13 @@ public abstract class WizardActivity extends Activity {
         statusView.setTextColor(Color.parseColor("#4460A5"));
         root.addView(statusView, lp(0, 4, 0, 10));
 
-        TextView keyLabel = Ui.text(this, "DeepSeek API Key（sk-…，只需填一次）", 13, true);
+        TextView keyLabel = Ui.text(this, "API Key（官方 DeepSeek 或第三方中转，只需填一次）", 13, true);
         root.addView(keyLabel, lp());
-        keyInput = Ui.edit(this, "粘贴你的 DeepSeek API Key", true);
+        keyInput = Ui.edit(this, "粘贴你的 API Key", true);
         // Prefill the key stored after the first successful deploy.
         String saved = prefs().getString(KEY_API, null);
         if (saved != null && !saved.isEmpty()) {
-            if (saved.startsWith("sk-")) {
+            if (!saved.contains("\n")) {
                 keyInput.setText(saved);
             } else {
                 // Stale/garbage value (e.g. an accidental paste): drop it.
@@ -110,6 +115,19 @@ public abstract class WizardActivity extends Activity {
         TextView keyHint = Ui.text(this, "Key 只保存在本机 App 与 Termux 环境里，不内置、不上传、不进安装包。", 11, false);
         keyHint.setTextColor(Color.parseColor("#888888"));
         root.addView(keyHint, lp(0, 2, 0, 8));
+
+        // Optional third-party endpoint (OpenAI-compatible relay).
+        TextView baseLabel = Ui.text(this, "API 地址（可选：第三方中转填，如 https://…/v1；留空 = 官方）", 13, true);
+        root.addView(baseLabel, lp(0, 10, 0, 4));
+        baseInput = Ui.edit(this, "留空使用官方 api.deepseek.com", false);
+        String savedBase = prefs().getString(KEY_BASE, null);
+        if (savedBase != null && !savedBase.isEmpty()) {
+            baseInput.setText(savedBase);
+        }
+        root.addView(baseInput, lp());
+        TextView baseHint = Ui.text(this, "填了以后 DSH 走第三方线路：模型列表自动从该地址拉取；地址只存本机。", 11, false);
+        baseHint.setTextColor(Color.parseColor("#888888"));
+        root.addView(baseHint, lp(0, 2, 0, 8));
 
         deployBtn = Ui.button(this, "一键部署");
         root.addView(deployBtn, lp(0, 4, 0, 8));
@@ -220,8 +238,15 @@ public abstract class WizardActivity extends Activity {
             setStatus("请先粘贴 API Key");
             return;
         }
-        if (!key.startsWith("sk-") || key.length() > 200 || key.contains("\n")) {
-            setStatus("Key 格式不对：应以 sk- 开头的纯文本，无换行。请重新粘贴。");
+        // Official keys are sk-…; third-party relays issue other shapes
+        // (pk-…, JWT, …) — only reject what would actually break the shell.
+        if (key.length() > 200 || key.contains("\n") || key.contains(" ")) {
+            setStatus("Key 格式不对：应为单行纯文本（≤200 字符），无空格无换行。请重新粘贴。");
+            return;
+        }
+        final String baseUrl = baseInput.getText().toString().trim();
+        if (!baseUrl.isEmpty() && !baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            setStatus("API 地址应以 http:// 或 https:// 开头，或留空使用官方。");
             return;
         }
         deploying = true;
@@ -235,12 +260,11 @@ public abstract class WizardActivity extends Activity {
             public void run() {
                 boolean ok = false;
                 try {
-                    doDeploy(key);
-                    // Successful deploy: remember state + key (device-only).
+                    doDeploy(key, baseUrl);
+                    // Successful deploy: remember state + key + endpoint (device-only).
                     prefs().edit().putString(KEY_DEPLOYED, "1").apply();
-                    if (key.startsWith("sk-")) {
-                        prefs().edit().putString(KEY_API, key).apply();
-                    }
+                    prefs().edit().putString(KEY_API, key).apply();
+                    prefs().edit().putString(KEY_BASE, baseUrl).apply();
                     ok = true;
                     setStatus("部署完成，正在打开界面…");
                 } catch (Exception e) {
