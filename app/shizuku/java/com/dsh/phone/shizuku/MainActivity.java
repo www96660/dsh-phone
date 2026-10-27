@@ -54,7 +54,7 @@ public class MainActivity extends WizardActivity {
     protected Class<?> shellActivityClass() { return WebActivity.class; }
 
     @Override
-    protected void doDeploy(String apiKey) throws Exception {
+    protected void doDeploy(String apiKey, String baseUrl) throws Exception {
         File files = getFilesDir();
 
         // a. extract assets
@@ -161,6 +161,7 @@ public class MainActivity extends WizardActivity {
         setStatus("正在安装 DSH（首次较慢，请耐心）…");
         tr = runAs("DEEPSEEK_API_KEY=" + shq(apiKey)
                 + " DSH_BRIDGE_TOKEN=" + shq(token)
+                + " DSH_BASE_URL=" + shq(baseUrl == null ? "" : baseUrl)
                 + " " + TERMUX_BASH + " " + TERMUX_HOME + "/setup-shizuku.sh", 20 * 60 * 1000);
         String setupOut = (tr.out + tr.err);
         if (setupOut.length() > 4000) setupOut = setupOut.substring(setupOut.length() - 4000);
@@ -393,7 +394,7 @@ public class MainActivity extends WizardActivity {
     }
 
     private static String shq(String s) {
-        return "'" + s.replace("'", "'\''") + "'";
+        return "'" + s.replace("'", "'\\''") + "'";
     }
 
     private static String genToken() {
