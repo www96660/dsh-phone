@@ -25,7 +25,7 @@ public class MainActivity extends WizardActivity {
     protected Class<?> shellActivityClass() { return WebActivity.class; }
 
     @Override
-    protected void doDeploy(String apiKey) throws Exception {
+    protected void doDeploy(String apiKey, String baseUrl) throws Exception {
         File filesDir = getFilesDir();
 
         log("解压安装资源…");
@@ -78,8 +78,9 @@ public class MainActivity extends WizardActivity {
 
         log("开始安装 DSH（首次需联网下载依赖，可能耗时数分钟）…");
         String escKey = shq(apiKey);
+        String escBase = shq(baseUrl == null ? "" : baseUrl);
         ShRoot.Result setup = ShRoot.execAs(uid,
-            "env DEEPSEEK_API_KEY=" + escKey + " " + PREFIX + "/bin/bash " + HOME + "/setup-root.sh",
+            "env DEEPSEEK_API_KEY=" + escKey + " DSH_BASE_URL=" + escBase + " " + PREFIX + "/bin/bash " + HOME + "/setup-root.sh",
             30 * 60 * 1000);
         String setupOut = setup.out;
         if (setupOut.length() > 40000) setupOut = setupOut.substring(setupOut.length() - 40000);
