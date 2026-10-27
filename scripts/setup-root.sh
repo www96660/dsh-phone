@@ -245,15 +245,76 @@ EOF
   fi
 
   echo "[step] write API key"
-  if [ -n "$DEEPSEEK_API_KEY" ] && printf '%s' "$DEEPSEEK_API_KEY" | grep -Eq '^sk-[A-Za-z0-9_-]+$'; then
+  if [ -n "$DEEPSEEK_API_KEY" ] && printf '%s' "$DEEPSEEK_API_KEY" | grep -Eq '^[^[:space:]]+$'; then
     printf '%s' "$DEEPSEEK_API_KEY" > "$HOME/.dsh-api-key"
     chmod 600 "$HOME/.dsh-api-key"
     echo "[ok] API key saved to ~/.dsh-api-key (chmod 600)"
   elif [ -n "$DEEPSEEK_API_KEY" ]; then
-    echo "[error] DEEPSEEK_API_KEY 格式非法（应为 sk- 开头的纯文本，不含换行）；未写入"
+    echo "[error] DEEPSEEK_API_KEY 格式非法（应为单行纯文本，不含空白字符）；未写入"
     exit 1
   else
     echo "[skip] DEEPSEEK_API_KEY not set"
+  fi
+
+
+  echo "[step] third-party endpoint (optional)"
+  if [ -n "$DSH_BASE_URL" ]; then
+    # Wizard 里填了第三方地址（OpenAI 兼容中转）：把 DSH 指过去，并注册一个
+    # pi-ai provider，让模型目录和默认模型来自该中转站而不是 api.deepseek.com。
+    BASE="${DSH_BASE_URL%/}"
+    printf '%s' "$BASE" > "$HOME/.dsh-base-url"
+    chmod 600 "$HOME/.dsh-base-url"
+    echo "[ok] ~/.dsh-base-url = $BASE"
+
+    # 模型目录：先问中转站的 /models，不通就回退 DeepSeek 风格默认列表。
+    MODELS="$(
+      curl -fsS --max-time 20 -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+        "$BASE/models" 2>/dev/null | node -e '
+let s = "";
+process.stdin.on("data", d => s += d).on("end", () => {
+  try {
+    const j = JSON.parse(s);
+    const ids = (j.data || []).map(m => m && m.id).filter(x => typeof x === "string" && x.length > 0);
+    process.stdout.write(ids.join(","));
+  } catch (e) { /* leave empty -> fallback below */ }
+});' || true
+    )"
+    if [ -z "$MODELS" ]; then
+      MODELS="deepseek-chat,deepseek-reasoner"
+      echo "[warn] $BASE/models 不可用，回退默认模型：$MODELS"
+      echo "       部署后可编辑 ~/.dsh/settings.yaml 修正模型 ID。"
+    fi
+    # 模型目录封顶，超大中转站的列表会把手机上的模型选择器拖慢。
+    MODELS="$(printf '%s' "$MODELS" | tr ',' '\n' | head -n 40 | tr '\n' ',' | sed 's/,$//' || true)"
+    FIRST="$(printf '%s' "$MODELS" | cut -d, -f1)"
+
+    {
+      echo "# dsh-phone 第三方 API（OpenAI 兼容；改完重启 DSH 生效）"
+      echo "llm-deepseek:"
+      echo "  baseURL: $BASE"
+      echo "llm-pi-ai:"
+      echo "  providers:"
+      echo "    thirdparty:"
+      echo "      displayName: Third-Party"
+      echo "      apiKeyEnv: DEEPSEEK_API_KEY"
+      echo "      api: openai-completions"
+      echo "      baseURL: $BASE"
+      echo "      models:"
+      printf '%s' "$MODELS" | tr ',' '\n' | while IFS= read -r m; do
+        m=$(printf '%s' "$m" | tr -d '[:space:]')
+        [ -n "$m" ] || continue
+        echo "        - id: $m"
+        echo "          name: $m"
+        echo "          input: [text, image]"
+      done
+      echo "agent-default-model:"
+      echo "  provider: thirdparty"
+      echo "  model: $FIRST"
+    } > "$HOME/.dsh/settings.yaml"
+    chmod 600 "$HOME/.dsh/settings.yaml"
+    echo "[ok] ~/.dsh/settings.yaml written (default model: $FIRST)"
+  else
+    echo "[skip] DSH_BASE_URL not set (官方 DeepSeek)"
   fi
 
   echo "[step] grant Termux:API hardware permissions (camera/mic/location)"
