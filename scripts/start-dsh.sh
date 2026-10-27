@@ -11,6 +11,12 @@ if [ -f "$HOME/.dsh-api-key" ]; then
   export DEEPSEEK_API_KEY="$(cat "$HOME/.dsh-api-key")"
 fi
 
+# Optional third-party relay: sessions pinned to the llm-deepseek route follow the
+# saved endpoint (llm-pi-ai routes read ~/.dsh/settings.yaml instead).
+if [ -f "$HOME/.dsh-base-url" ]; then
+  export DEEPSEEK_BASE_URL="$(cat "$HOME/.dsh-base-url")"
+fi
+
 # Already serving? Then leave it alone. Restarting a healthy server leaves 3080
 # dark for the ~20-30s node boot, and WebActivity gets exactly one load attempt:
 # that window is the "DSH 还没起来" white page users see. The self-heal below
